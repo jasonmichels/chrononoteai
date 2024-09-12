@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Note structure to hold metadata and content
 type Note struct {
 	Title   string   `yaml:"title"`
 	Date    string   `yaml:"date"`
@@ -18,35 +19,59 @@ type Note struct {
 	Content string   `yaml:"-"`
 }
 
-func main() {
-	// Define the markdown directory
-	markdownDir := "./notes" // this could be passed as a flag or config
+// FileSystem interface for dependency injection
+type FileSystem interface {
+	ReadFile(path string) ([]byte, error)
+	WriteFile(path string, data []byte, perm os.FileMode) error
+	AppendToFile(path string, data string) error
+	MkdirAll(path string, perm os.FileMode) error
+}
 
-	// Path to the buffer file
+// OSFileSystem implementation of FileSystem that uses actual OS calls
+type OSFileSystem struct{}
+
+func (fs OSFileSystem) ReadFile(path string) ([]byte, error) {
+	return os.ReadFile(path)
+}
+
+func (fs OSFileSystem) WriteFile(path string, data []byte, perm os.FileMode) error {
+	return os.WriteFile(path, data, perm)
+}
+
+func (fs OSFileSystem) AppendToFile(path string, data string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.WriteString(data)
+	return err
+}
+
+func (fs OSFileSystem) MkdirAll(path string, perm os.FileMode) error {
+	return os.MkdirAll(path, perm)
+}
+
+// Main function
+func main() {
+	fs := OSFileSystem{}
+	markdownDir := "./notes"
 	bufferFile := filepath.Join(markdownDir, "chrononoteai.md")
 
-	// Read the buffer file
-	data, err := os.ReadFile(bufferFile)
+	data, err := fs.ReadFile(bufferFile)
 	if err != nil {
-		fmt.Println("Error reading buffer file:", err)
+		log.Printf("Error reading buffer file: %v", err)
 		return
 	}
 
-	// Split the notes by YAML front matter
-	notes := parseNotes(string(data))
-
-	// Process each note
-	for _, note := range notes {
-		log.Printf("Processing note for date: %s, title: %s", note.Date, note.Title)
-		filePath := buildMarkdownPath(note, markdownDir)
-		err := appendNoteToFile(filePath, note)
-		if err != nil {
-			log.Println("Error writing note to file:", err)
-			return
-		}
+	err = processNotes(string(data), markdownDir, fs)
+	if err != nil {
+		log.Printf("Error processing notes: %v", err)
+		return
 	}
 
-	err = clearBufferFile(bufferFile)
+	err = fs.WriteFile(bufferFile, []byte(""), 0o644)
 	if err != nil {
 		log.Printf("Error clearing buffer file: %v", err)
 	} else {
@@ -54,28 +79,60 @@ func main() {
 	}
 }
 
+// processNotes handles the logic of parsing notes and appending them to files
+func processNotes(data, markdownDir string, fs FileSystem) error {
+	notes := parseNotes(data)
+
+	for _, note := range notes {
+		log.Printf("Processing note for date: %s, title: %s", note.Date, note.Title)
+		filePath := buildMarkdownPath(note, markdownDir)
+
+		if err := fs.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
+			return err
+		}
+
+		// Manually format YAML front matter to avoid quotes around the date and format tags properly
+		tags := ""
+		for _, tag := range note.Tags {
+			tags += fmt.Sprintf("  - %s\n", tag)
+		}
+
+		yamlFrontMatter := fmt.Sprintf(`---
+title: %s
+date: %s
+tags:
+%s---`, note.Title, note.Date, tags)
+
+		// Format the full note content with YAML front matter
+		fullNote := fmt.Sprintf("%s\n%s\n\n", yamlFrontMatter, note.Content)
+
+		if err := fs.AppendToFile(filePath, fullNote); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// parseNotes parses the notes from the buffer content
 func parseNotes(data string) []Note {
 	var notes []Note
 
-	// Split the file by `---` to separate the YAML front matter sections
 	entries := strings.Split(data, "---")
-	for i := 1; i < len(entries); i += 2 { // Process each pair of YAML and content
+	for i := 1; i < len(entries); i += 2 {
 		var note Note
 
-		// Skip if the YAML part is empty
 		if strings.TrimSpace(entries[i]) == "" {
 			continue
 		}
 
-		// Unmarshal the YAML front matter
 		if err := yaml.Unmarshal([]byte(entries[i]), &note); err != nil {
 			log.Println("Error parsing YAML:", err)
 			continue
 		}
 
-		// The content of the note is in the next segment
 		if i+1 < len(entries) {
-			note.Content = strings.TrimSpace(entries[i+1]) // Remove extra whitespace
+			note.Content = strings.TrimSpace(entries[i+1])
 		}
 
 		notes = append(notes, note)
@@ -84,63 +141,16 @@ func parseNotes(data string) []Note {
 	return notes
 }
 
-// Extract content after YAML front matter
-func extractContent(entry string) string {
-	split := strings.SplitN(entry, "---", 2)
-	if len(split) > 1 {
-		return strings.TrimSpace(split[1])
-	}
-	return ""
-}
-
-// Build the file path based on the note date
+// buildMarkdownPath builds the file path based on the note date
 func buildMarkdownPath(note Note, baseDir string) string {
-	// Parse the date
 	noteDate, err := time.Parse("2006-01-02", note.Date)
 	if err != nil {
 		log.Println("Error parsing date:", err)
 		return ""
 	}
 
-	// Create the file path (e.g., /notes/2024/09/12.md)
 	datePath := filepath.Join(baseDir, noteDate.Format("2006/01"))
 	fileName := fmt.Sprintf("%02d.md", noteDate.Day())
 
 	return filepath.Join(datePath, fileName)
-}
-
-// Append the note (with YAML front matter) to the corresponding markdown file
-func appendNoteToFile(path string, note Note) error {
-	// Ensure the directory exists
-	if err := os.MkdirAll(filepath.Dir(path), os.ModePerm); err != nil {
-		return err
-	}
-
-	// Open the file (create if it doesn't exist)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	// Prepare YAML front matter
-	yamlData, err := yaml.Marshal(note)
-	if err != nil {
-		return fmt.Errorf("error marshaling YAML: %v", err)
-	}
-
-	// Format the full note content with YAML front matter
-	fullNote := fmt.Sprintf("---\n%s---\n%s\n\n", string(yamlData), note.Content)
-
-	// Append the full note (YAML + content) to the file
-	if _, err := f.WriteString(fullNote); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// Clear the buffer file after processing
-func clearBufferFile(path string) error {
-	return os.WriteFile(path, []byte(""), 0o644)
 }
