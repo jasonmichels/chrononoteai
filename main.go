@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/jasonmichels/chrononoteai/config"
 	"log"
 	"os"
 	"path/filepath"
@@ -55,23 +56,32 @@ func (fs OSFileSystem) MkdirAll(path string, perm os.FileMode) error {
 
 // Main function
 func main() {
-	fs := OSFileSystem{}
-	markdownDir := "./notes"
-	bufferFile := filepath.Join(markdownDir, "chrononoteai.md")
+	// lets try to refactor this to make it more readable
+	// first, read configuration and get file path, or some sort of config object
+	// second, load the file into memory
+	// third, validate the file to make sure we won't have any issues with the notes
+	// fourth, process each individual note, which right now is just saving to correct location
+	// fifth, empty the buffer file and return a success
+	cfg, err := config.Initialize()
+	if err != nil {
+		log.Fatalf("Error initializing configuration: %v", err)
+	}
 
-	data, err := fs.ReadFile(bufferFile)
+	fs := OSFileSystem{}
+
+	data, err := fs.ReadFile(cfg.BufferFile)
 	if err != nil {
 		log.Printf("Error reading buffer file: %v", err)
 		return
 	}
 
-	err = processNotes(string(data), markdownDir, fs)
+	err = processNotes(string(data), cfg.NotesDir, fs)
 	if err != nil {
 		log.Printf("Error processing notes: %v", err)
 		return
 	}
 
-	err = fs.WriteFile(bufferFile, []byte(""), 0o644)
+	err = fs.WriteFile(cfg.BufferFile, []byte(""), 0o644)
 	if err != nil {
 		log.Printf("Error clearing buffer file: %v", err)
 	} else {

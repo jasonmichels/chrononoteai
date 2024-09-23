@@ -24,4 +24,7 @@ clean:
 # Rebuild
 rebuild: clean build
 
+# Run
+run: $(APP_NAME)
+
 .PHONY: all build test clean rebuild
