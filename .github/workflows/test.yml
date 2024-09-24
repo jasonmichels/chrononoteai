@@ -1,0 +1,30 @@
+name: Go Test
+
+on:
+  push:
+    branches: [ "*" ]
+
+jobs:
+  test:
+    name: Test Chrono Note AI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+
+      - name: Test
+        run: |
+          go mod download
+          go test -v ./... -bench . -cover > TestResults-1.23.json
+
+      - name: Upload Go test results
+        uses: actions/upload-artifact@v3
+        with:
+          name: Go-results-1.23
+          path: TestResults-1.23.json

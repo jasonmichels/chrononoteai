@@ -1,13 +1,15 @@
-// config/config.go
 package config
 
 import (
 	"encoding/json"
 	"flag"
-	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 )
+
+// string constant for chrononoteai
+const dirName = "chrononoteai"
 
 type Config struct {
 	BufferFile string `json:"buffer_file"`
@@ -17,30 +19,28 @@ type Config struct {
 
 // InitializeWithArgs Modify Initialize to accept a FlagSet and arguments
 func InitializeWithArgs(args []string) (*Config, error) {
-	// Create a new FlagSet
-	fs := flag.NewFlagSet("chrononoteai", flag.ContinueOnError)
+	fs := flag.NewFlagSet(dirName, flag.ContinueOnError)
 
-	// Determine default config file path
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user home directory: %w", err)
+		log.Println("Failed to get user home directory")
+		return nil, err
 	}
 	defaultConfigPath := filepath.Join(homeDir, ".config", "chrononoteai", "config.json")
 
-	// Command-line flags
 	configPath := fs.String("config", defaultConfigPath, "Path to the configuration file")
 	bufferFile := fs.String("buffer", "", "Path to the buffer file")
 	notesDir := fs.String("notes", "", "Path to the notes directory")
 
-	// Parse the provided arguments
 	if err := fs.Parse(args); err != nil {
-		return nil, fmt.Errorf("error parsing flags: %w", err)
+		log.Println("Failed to parse command-line arguments")
+		return nil, err
 	}
 
-	// Load configuration
 	cfg, err := LoadConfig(*configPath)
 	if err != nil {
-		return nil, fmt.Errorf("error loading config: %w", err)
+		log.Println("Failed to load config")
+		return nil, err
 	}
 
 	// Override with command-line arguments
@@ -57,11 +57,16 @@ func InitializeWithArgs(args []string) (*Config, error) {
 	// Save updated configuration
 	if updated {
 		if err := cfg.Save(); err != nil {
-			return nil, fmt.Errorf("error saving config: %w", err)
+			log.Println("Failed to save config")
+			return nil, err
 		}
 	}
 
-	// Log configuration information
+	err = cfg.CreateBufferFileIfNeeded()
+	if err != nil {
+		return nil, err
+	}
+
 	logConfiguration(cfg)
 
 	return cfg, nil
@@ -73,11 +78,11 @@ func Initialize() (*Config, error) {
 }
 
 func logConfiguration(cfg *Config) {
-	fmt.Println("Configuration:")
-	fmt.Printf("  Config File: %s\n", cfg.ConfigFile)
-	fmt.Printf("  Buffer File: %s\n", cfg.BufferFile)
-	fmt.Printf("  Notes Dir:   %s\n", cfg.NotesDir)
-	fmt.Println("You can modify these settings in the config file or via command-line flags.")
+	log.Println("Configuration:")
+	log.Printf("  Config File: %s\n", cfg.ConfigFile)
+	log.Printf("  Buffer File: %s\n", cfg.BufferFile)
+	log.Printf("  Notes Dir:   %s\n", cfg.NotesDir)
+	log.Println("You can modify these settings in the config file or via command-line flags.")
 }
 
 // LoadConfig loads the configuration from the given path or initializes it with defaults.
@@ -89,47 +94,76 @@ func LoadConfig(configPath string) (*Config, error) {
 	// Check if config file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		// Use default values if config file doesn't exist
-		config.setDefaults()
-		// Create config directory if it doesn't exist
-		os.MkdirAll(filepath.Dir(configPath), os.ModePerm)
-		// Save the default config
+		defaultErr := config.setDefaults()
+		if defaultErr != nil {
+			return nil, defaultErr
+		}
+
+		mkDirErr := os.MkdirAll(filepath.Dir(configPath), os.ModePerm)
+		if mkDirErr != nil {
+			return nil, mkDirErr
+		}
+
 		if err := config.Save(); err != nil {
 			return nil, err
 		}
 		return config, nil
 	}
 
-	// Read the config file
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+		log.Println("Failed to read config file")
+		return nil, err
 	}
 
-	// Unmarshal JSON
 	if err := json.Unmarshal(data, config); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+		log.Println("Failed to parse config file")
+		return nil, err
 	}
 
 	return config, nil
+}
+
+// CreateBufferFileIfNeeded checks if buffer file exists and if not it creates it
+func (c *Config) CreateBufferFileIfNeeded() error {
+	if _, err := os.Stat(c.BufferFile); os.IsNotExist(err) {
+		bufferFile, err := os.Create(c.BufferFile)
+		if err != nil {
+			log.Println("Failed to create buffer file")
+			return err
+		}
+
+		err = bufferFile.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Save writes the configuration to the config file.
 func (c *Config) Save() error {
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to serialize config: %w", err)
+		log.Println("Failed to serialize config")
+		return err
 	}
 
-	// Write to config file
 	if err := os.WriteFile(c.ConfigFile, data, 0o644); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
+		log.Println("Failed to write config file")
+		return err
 	}
 
 	return nil
 }
 
-func (c *Config) setDefaults() {
-	homeDir, _ := os.UserHomeDir()
-	c.BufferFile = filepath.Join(homeDir, ".config", "chrononoteai", "note.md")
-	c.NotesDir = filepath.Join(homeDir, ".config", "chrononoteai", "notes")
+func (c *Config) setDefaults() error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	c.BufferFile = filepath.Join(homeDir, ".config", dirName, "note.md")
+	c.NotesDir = filepath.Join(homeDir, ".config", dirName, "notes")
+	return nil
 }
