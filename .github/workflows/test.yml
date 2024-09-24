@@ -21,10 +21,4 @@ jobs:
       - name: Test
         run: |
           go mod download
-          go test -v ./... -bench . -cover > TestResults-1.23.json
-
-      - name: Upload Go test results
-        uses: actions/upload-artifact@v3
-        with:
-          name: Go-results-1.23
-          path: TestResults-1.23.json
+          go test -v ./... -bench . -cover
